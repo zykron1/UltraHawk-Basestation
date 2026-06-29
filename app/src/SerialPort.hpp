@@ -53,27 +53,29 @@ public:
 	}
 
 	std::optional<std::string> readLine() {
-		char temp[128];
-
-		ssize_t n = read(fd, temp, sizeof(temp));
-		if (n > 0) {
-			buffer.append(temp, n);
-		}
-
 		auto pos = buffer.find('\n');
 		if (pos == std::string::npos) {
-			return std::nullopt;
+			char temp[128];
+			ssize_t n = read(fd, temp, sizeof(temp));
+			if (n > 0) {
+				buffer.append(temp, n);
+			}
+			pos = buffer.find('\n');
+			if (pos == std::string::npos) {
+				return std::nullopt;
+			}
 		}
 
 		std::string line = buffer.substr(0, pos);
-
 		if (!line.empty() && line.back() == '\r') {
 			line.pop_back();
 		}
-
 		buffer.erase(0, pos + 1);
-
 		return line;
+	}
+
+	void writeString(const std::string& data) {
+		write(fd, data.c_str(), data.size());
 	}
 
 private:
