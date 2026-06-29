@@ -1,4 +1,5 @@
-build
 .cache
-compile_commands.json
+app/build
+app/compile_commands.json
+firmware/compile_commands.json
 firmware/build
