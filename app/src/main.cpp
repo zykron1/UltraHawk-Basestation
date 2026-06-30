@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QCheckBox>
 #include <QSet>
+#include <QPainter>
 
 #include <sstream>
 #include <optional>
@@ -37,6 +38,10 @@ struct TelemetryData {
     double roll = 0.0;
     double pitch = 0.0;
     double yaw = 0.0;
+    double m1 = 0.0;
+    double m2 = 0.0;
+    double m3 = 0.0;
+    double m4 = 0.0;
 };
 
 struct Command {
@@ -81,35 +86,33 @@ static QString stateToColor(States s) {
 }
 
 static bool parseTelemetryLine(const std::string& line, TelemetryData& out) {
-    std::istringstream iss(line);
-    std::string tag;
-    std::string tField;
-
-    std::cout << line << std::endl;
-
-    if (!(iss >> tag)) return false;
-    if (tag != "DP") return false;
-
-    if (!(iss >> out.packetNumber)) return false;
-    if (!(iss >> tField)) return false;
-
-    auto eq = tField.find('=');
-    if (eq == std::string::npos) return false;
+    if (line.find("DP ") != 0) return false;
 
     try {
-        out.missionTime = std::stod(tField.substr(eq + 1));
+        size_t tPos = line.find("t=");
+        size_t statePos = line.find("state=");
+        size_t motorPos = line.find("motor=");
 
-        std::string rollStr, pitchStr, yawStr, stateField;
-        if (!(iss >> rollStr >> pitchStr >> yawStr >> stateField)) return false;
+        if (tPos == std::string::npos || statePos == std::string::npos || motorPos == std::string::npos) {
+            return false;
+        }
 
-        out.roll = std::stod(rollStr);
-        out.pitch = std::stod(pitchStr);
-        out.yaw = std::stod(yawStr);
+        std::string pktStr = line.substr(3, tPos - 4);
+        out.packetNumber = std::stoull(pktStr);
 
-        auto stateEq = stateField.find('=');
-        if (stateEq != std::string::npos) {
-            int stateVal = std::stoi(stateField.substr(stateEq + 1));
-            out.state = static_cast<States>(stateVal);
+        std::string motionStr = line.substr(tPos + 2, statePos - (tPos + 2));
+        std::istringstream motionIss(motionStr);
+        if (!(motionIss >> out.missionTime >> out.roll >> out.pitch >> out.yaw)) {
+            return false;
+        }
+
+        std::string stateStr = line.substr(statePos + 6, motorPos - (statePos + 6));
+        out.state = static_cast<States>(std::stoi(stateStr));
+
+        std::string motorStr = line.substr(motorPos + 6);
+        std::istringstream motorIss(motorStr);
+        if (!(motorIss >> out.m1 >> out.m2 >> out.m3 >> out.m4)) {
+            return false;
         }
     } catch (...) {
         return false;
@@ -117,6 +120,93 @@ static bool parseTelemetryLine(const std::string& line, TelemetryData& out) {
 
     return true;
 }
+
+class DroneMotorsWidget : public QWidget {
+    Q_OBJECT
+public:
+    DroneMotorsWidget(QWidget *parent = nullptr) : QWidget(parent) {
+        setFixedSize(240, 260);
+        setFocusPolicy(Qt::NoFocus); // Ensure widget never steals main keystroke focus
+    }
+
+    void setMotorOutputs(double m1, double m2, double m3, double m4) {
+        m_m1 = m1;
+        m_m2 = m2;
+        m_m3 = m3;
+        m_m4 = m4;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override {
+        Q_UNUSED(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        painter.setPen(QPen(QColor("#444444"), 1));
+        painter.setBrush(QColor("#2b2b2b"));
+        painter.drawRoundedRect(rect().adjusted(2, 2, -2, -2), 10, 10);
+
+        int cx = width() / 2;
+        int cy = height() / 2 - 15;
+        int armLength = 55;
+
+        painter.setPen(QPen(QColor("#555555"), 6, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(cx - armLength, cy - armLength, cx + armLength, cy + armLength);
+        painter.drawLine(cx + armLength, cy - armLength, cx - armLength, cy + armLength);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor("#1e1e1e"));
+        painter.drawEllipse(QPoint(cx, cy), 18, 18);
+        
+        painter.setBrush(QColor("#ff3b30"));
+        QPolygon centerTri;
+        centerTri << QPoint(cx, cy - 12) << QPoint(cx - 6, cy - 2) << QPoint(cx + 6, cy - 2);
+        painter.drawPolygon(centerTri);
+
+        QPoint m1Pos(cx + armLength, cy - armLength);
+        QPoint m2Pos(cx + armLength, cy + armLength);
+        QPoint m3Pos(cx - armLength, cy + armLength);
+        QPoint m4Pos(cx - armLength, cy - armLength);
+
+        auto drawMotor = [&](const QPoint& pos, const QString& name, double val, const QColor& color) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor("#111111"));
+            painter.drawEllipse(pos, 16, 16);
+            
+            painter.setPen(QPen(color, 2));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(pos, 14, 14);
+
+            painter.setPen(QColor("#ffffff"));
+            QFont font = painter.font();
+            font.setPointSize(8);
+            font.setBold(true);
+            painter.setFont(font);
+            painter.drawText(QRect(pos.x() - 15, pos.y() - 15, 30, 30), Qt::AlignCenter, name);
+        };
+
+        drawMotor(m1Pos, "M1", m_m1, QColor("#00d4ff"));
+        drawMotor(m2Pos, "M2", m_m2, QColor("#00ff00"));
+        drawMotor(m3Pos, "M3", m_m3, QColor("#ffaa00"));
+        drawMotor(m4Pos, "M4", m_m4, QColor("#ff3366"));
+
+        QFont textFont = painter.font();
+        textFont.setPointSize(9);
+        textFont.setBold(false);
+        painter.setFont(textFont);
+        painter.setPen(QColor("#aaaaaa"));
+
+        int textY = height() - 40;
+        painter.drawText(QRect(10, textY, 105, 15), Qt::AlignLeft, QString("M1: %1").arg(m_m1, 0, 'f', 2));
+        painter.drawText(QRect(125, textY, 105, 15), Qt::AlignRight, QString("M2: %1").arg(m_m2, 0, 'f', 2));
+        painter.drawText(QRect(10, textY + 18, 105, 15), Qt::AlignLeft, QString("M4: %1").arg(m_m4, 0, 'f', 2));
+        painter.drawText(QRect(125, textY + 18, 105, 15), Qt::AlignRight, QString("M3: %1").arg(m_m3, 0, 'f', 2));
+    }
+
+private:
+    double m_m1 = 0.0, m_m2 = 0.0, m_m3 = 0.0, m_m4 = 0.0;
+};
 
 class GCSWindow : public QWidget {
     Q_OBJECT
@@ -180,6 +270,12 @@ protected:
         updateMovementKeys();
     }
 
+    // Force grab control focus back if window background area is clicked
+    void mousePressEvent(QMouseEvent *event) override {
+        Q_UNUSED(event);
+        this->setFocus();
+    }
+
 private:
     Command cmd;
     QSet<int> pressedKeys;
@@ -200,6 +296,7 @@ private:
     QLabel *stateVal = nullptr;
     
     PfdWidget *pfd = nullptr;
+    DroneMotorsWidget *droneMotors = nullptr;
     TrendGraphWidget *trend = nullptr;
 
     void setupUI() {
@@ -234,6 +331,7 @@ private:
         left->addWidget(createMetricWidget("YAW", "0.0°", "#ffffff", &yawVal));
 
         pfd = new PfdWidget();
+        droneMotors = new DroneMotorsWidget();
 
         auto *right = new QVBoxLayout();
         right->addWidget(createMetricWidget("MISSION TIME", "0.000", "#ffff00", &missionTimeVal));
@@ -242,7 +340,8 @@ private:
 
         grid->addLayout(left, 0, 0);
         grid->addWidget(pfd, 0, 1);
-        grid->addLayout(right, 0, 2);
+        grid->addWidget(droneMotors, 0, 2); 
+        grid->addLayout(right, 0, 3);
         mainLayout->addLayout(grid);
 
         trend = new TrendGraphWidget();
@@ -365,6 +464,7 @@ private:
         );
 
         pfd->setAttitude(latest.roll, latest.pitch);
+        droneMotors->setMotorOutputs(latest.m1, latest.m2, latest.m3, latest.m4);
         trend->addSample(latest.missionTime, latest.roll, latest.pitch, latest.yaw);
     }
 };

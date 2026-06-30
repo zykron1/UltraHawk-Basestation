@@ -17,6 +17,7 @@ typedef struct __attribute__((packed)) {
 	float gx, gy, gz, ax, ay, az; // imu data
 	float roll, pitch, yaw; // orientation
 	float x, y, z; // location
+	float m1, m2, m3, m4;
 } TelemetryPacket;
 
 typedef struct __attribute__((packed)) {
@@ -80,13 +81,17 @@ char lineBuffer[MAX_LINE_LENGTH];
 size_t bufferIndex = 0;
 
 void loop() {
-	Serial.printf("DP %zu t=%f %f %f %f state=%d\n", 
+	Serial.printf("DP %zu t=%f %f %f %f state=%d motor=%f %f %f %f\n", 
 		myData.packet_number,
 		myData.missionTime,
 		myData.roll,
 		myData.pitch,
 		myData.yaw,
-		(int)myData.state
+		(int)myData.state,
+		myData.m1,
+		myData.m2,
+		myData.m3,
+		myData.m4
 	);
 
     while (Serial.available()) {
