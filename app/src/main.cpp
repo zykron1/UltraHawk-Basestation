@@ -404,12 +404,12 @@ private:
         if (stateBox->currentData().toInt() != TELEOP) return;
 
         float newPitch = 0.0f;
-        if (pressedKeys.contains(Qt::Key_W)) newPitch += 20.0f;
-        if (pressedKeys.contains(Qt::Key_S)) newPitch -= 20.0f;
+        if (pressedKeys.contains(Qt::Key_W)) newPitch += 5.0f;
+        if (pressedKeys.contains(Qt::Key_S)) newPitch -= 5.0f;
 
         float newRoll = 0.0f;
-        if (pressedKeys.contains(Qt::Key_D)) newRoll += 20.0f;
-        if (pressedKeys.contains(Qt::Key_A)) newRoll -= 20.0f;
+        if (pressedKeys.contains(Qt::Key_D)) newRoll += 5.0f;
+        if (pressedKeys.contains(Qt::Key_A)) newRoll -= 5.0f;
 
         if (cmd.pitch != newPitch || cmd.roll != newRoll) {
             cmd.pitch = newPitch;
