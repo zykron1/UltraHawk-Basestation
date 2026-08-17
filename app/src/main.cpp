@@ -89,6 +89,16 @@ static bool parseTelemetryLine(const std::string& line, TelemetryData& out) {
     if (line.find("DP ") != 0) return false;
 
     try {
+        auto parseAttitudeValue = [](const std::string& token, const char* label, double& value) {
+            std::string numeric = token;
+            const std::string prefix = std::string(label) + "=";
+            if (numeric.rfind(prefix, 0) == 0) numeric.erase(0, prefix.size());
+
+            size_t parsed = 0;
+            value = std::stod(numeric, &parsed);
+            return parsed == numeric.size();
+        };
+
         size_t tPos = line.find("t=");
         size_t statePos = line.find("state=");
         size_t motorPos = line.find("motor=");
@@ -102,7 +112,13 @@ static bool parseTelemetryLine(const std::string& line, TelemetryData& out) {
 
         std::string motionStr = line.substr(tPos + 2, statePos - (tPos + 2));
         std::istringstream motionIss(motionStr);
-        if (!(motionIss >> out.missionTime >> out.roll >> out.pitch >> out.yaw)) {
+        std::string rollToken;
+        std::string pitchToken;
+        std::string yawToken;
+        if (!(motionIss >> out.missionTime >> rollToken >> pitchToken >> yawToken) ||
+            !parseAttitudeValue(rollToken, "roll", out.roll) ||
+            !parseAttitudeValue(pitchToken, "pitch", out.pitch) ||
+            !parseAttitudeValue(yawToken, "yaw", out.yaw)) {
             return false;
         }
 

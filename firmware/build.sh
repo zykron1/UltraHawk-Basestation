@@ -1,6 +1,6 @@
 #!/bin/sh
 
-FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc"
+FQBN="arduino:esp32:nano_nora"
 PORT="/dev/ttyACM0"
 SKETCH="firmware.ino"
 BAUD=9600

@@ -1,79 +1,162 @@
 #include <Arduino.h>
-#include <esp_now.h>
 #include <WiFi.h>
-#include <string>
+#include <esp_now.h>
+#include <string.h>
 
-// Must be the same on UltraHawk
-enum States {
-	IDLE,
-	TELEOP,
-	AUTON,
-};
+enum States : uint8_t { IDLE, TELEOP, AUTON };
 
 typedef struct __attribute__((packed)) {
-	size_t packet_number;
-	float missionTime;
-	States state;
-	float gx, gy, gz, ax, ay, az; // imu data
-	float roll, pitch, yaw; // orientation
-	float x, y, z; // location
-	float m1, m2, m3, m4;
+    uint32_t packet_number;
+    float missionTime;
+    uint8_t state;
+    float gx, gy, gz;
+    float ax, ay, az;
+    float roll, pitch, yaw;
+    float x, y, z;
+    float m1, m2, m3, m4;
 } TelemetryPacket;
 
 typedef struct __attribute__((packed)) {
-	States state;
-	float thrust, roll, pitch, yaw; // if teleop
-	float xpos, ypos, zpos; // if auton
+    uint8_t state;
+    float thrust, roll, pitch, yaw;
+    float xpos, ypos, zpos;
 } Command;
 
-TelemetryPacket myData;
-String recievedCommand;
-uint8_t broadcastAddress[] = {0x58, 0x8c, 0x81, 0xac, 0xbd, 0xa4};
+// This must be the drone's MAC address.
+uint8_t droneAddress[] = {0x58, 0x8c, 0x81, 0xac, 0xbd, 0xa4};
 
-Command cmd;
+TelemetryPacket latestTelemetry = {};
+Command command = {IDLE, 0, 0, 0, 0, 0, 0, 0};
 
-void parseCommand(char* line) {
-    Serial.print("DEBUG Received: ");
-    Serial.println(line);
+portMUX_TYPE telemetryMux = portMUX_INITIALIZER_UNLOCKED;
 
-    char* token = strtok(line, " ");
-    
-    if (token == NULL) return; 
+bool commandValid = false;
+uint32_t lastCommandSend = 0;
+uint32_t lastTelemetryPrint = 0;
 
-    cmd.state = (States)atoi(token);
+const uint32_t COMMAND_SEND_PERIOD_MS = 50;
+const uint32_t TELEMETRY_PRINT_PERIOD_MS = 100;
 
-    float* values[] = { &cmd.thrust, &cmd.roll, &cmd.pitch, &cmd.yaw, &cmd.xpos, &cmd.ypos, &cmd.zpos };
-    
-    for (int i = 0; i < 7; i++) {
-        token = strtok(NULL, " ");
-        if (token != NULL) {
-            *values[i] = atof(token);
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+    if (len != sizeof(TelemetryPacket)) {
+        return;
+    }
+
+    TelemetryPacket received;
+    memcpy(&received, incomingData, sizeof(received));
+
+    if (received.state > AUTON) {
+        return;
+    }
+
+    portENTER_CRITICAL(&telemetryMux);
+    latestTelemetry = received;
+    portEXIT_CRITICAL(&telemetryMux);
+}
+
+bool parseCommand(char *line) {
+    char *token = strtok(line, " ");
+    if (token == nullptr) {
+        return false;
+    }
+
+    int state = atoi(token);
+    if (state < IDLE || state > AUTON) {
+        Serial.println("Invalid state");
+        return false;
+    }
+
+    float values[7] = {};
+    int valueCount = 0;
+
+    while ((token = strtok(nullptr, " ")) != nullptr && valueCount < 7) {
+        values[valueCount++] = atof(token);
+    }
+
+    Command parsed = {IDLE, 0, 0, 0, 0, 0, 0, 0};
+    parsed.state = static_cast<uint8_t>(state);
+
+    if (state == IDLE) {
+        command = parsed;
+        return true;
+    }
+
+    if (state == TELEOP) {
+        if (valueCount < 4) {
+            Serial.println("TELEOP requires: state thrust roll pitch yaw");
+            return false;
+        }
+
+        parsed.thrust = values[0];
+        parsed.roll = values[1];
+        parsed.pitch = values[2];
+        parsed.yaw = values[3];
+    }
+
+    if (state == AUTON) {
+        if (valueCount >= 7) {
+            // Original format: state thrust roll pitch yaw xpos ypos zpos
+            parsed.xpos = values[4];
+            parsed.ypos = values[5];
+            parsed.zpos = values[6];
+        } else if (valueCount >= 3) {
+            // Short format: state xpos ypos zpos
+            parsed.xpos = values[0];
+            parsed.ypos = values[1];
+            parsed.zpos = values[2];
         } else {
-            Serial.println("Error: Incomplete packet received!");
-            return; // Exit early if packet is malformed
+            Serial.println("AUTON requires: state xpos ypos zpos");
+            return false;
         }
     }
 
-    Serial.println("parsed!!");
+    command = parsed;
+    return true;
 }
 
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-	memcpy(&myData, incomingData, sizeof(myData));
+void sendCommand() {
+    if (!commandValid) {
+        return;
+    }
+
+    esp_err_t result = esp_now_send(
+        droneAddress, reinterpret_cast<uint8_t *>(&command), sizeof(command));
+
+    if (result != ESP_OK) {
+        Serial.printf("Command send failed: %d\n", result);
+    }
 }
 
 void setup() {
-	delay(2000);
-	WiFi.mode(WIFI_STA);
-	esp_now_init();
-	esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+    Serial.begin(115200);
 
-	esp_now_peer_info_t peerInfo = {};
-	memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-	peerInfo.channel = 0;  
-	peerInfo.encrypt = false;
-	esp_now_add_peer(&peerInfo);
+    WiFi.mode(WIFI_STA);
 
-	Serial.begin(9600);
+    Serial.print("Ground station MAC: ");
+    Serial.println(WiFi.macAddress());
+
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP-NOW init failed");
+        while (true) {
+            delay(1000);
+        }
+    }
+
+    esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, droneAddress, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (!esp_now_is_peer_exist(droneAddress)) {
+        esp_err_t result = esp_now_add_peer(&peerInfo);
+        if (result != ESP_OK) {
+            Serial.printf("Peer add failed: %d\n", result);
+        }
+    }
+
+    Serial.println("Ground station ready");
 }
 
 const size_t MAX_LINE_LENGTH = 128;
@@ -81,34 +164,45 @@ char lineBuffer[MAX_LINE_LENGTH];
 size_t bufferIndex = 0;
 
 void loop() {
-	Serial.printf("DP %zu t=%f %f %f %f state=%d motor=%f %f %f %f\n", 
-		myData.packet_number,
-		myData.missionTime,
-		myData.roll,
-		myData.pitch,
-		myData.yaw,
-		(int)myData.state,
-		myData.m1,
-		myData.m2,
-		myData.m3,
-		myData.m4
-	);
+    uint32_t now = millis();
 
-    while (Serial.available()) {
+    if (now - lastTelemetryPrint >= TELEMETRY_PRINT_PERIOD_MS) {
+        lastTelemetryPrint = now;
+
+        TelemetryPacket telemetry;
+        portENTER_CRITICAL(&telemetryMux);
+        telemetry = latestTelemetry;
+        portEXIT_CRITICAL(&telemetryMux);
+
+        Serial.printf("DP %lu t=%.3f roll=%.2f pitch=%.2f yaw=%.2f "
+                      "state=%u motor=%.1f %.1f %.1f %.1f\n",
+                      static_cast<unsigned long>(telemetry.packet_number),
+                      telemetry.missionTime, telemetry.roll, telemetry.pitch,
+                      telemetry.yaw, telemetry.state, telemetry.m1,
+                      telemetry.m2, telemetry.m3, telemetry.m4);
+    }
+
+    while (Serial.available() > 0) {
         char c = Serial.read();
-        
+
         if (c == '\n' || c == '\r') {
             if (bufferIndex > 0) {
-                lineBuffer[bufferIndex] = '\0';                
-                parseCommand(lineBuffer);
-				esp_err_t result = esp_now_send(broadcastAddress, (uint8_t*)&cmd, sizeof(cmd));
-				if (result == ESP_OK) {
-					Serial.println("ESP NOW WORK");
-				}
-				bufferIndex = 0;
+                lineBuffer[bufferIndex] = '\0';
+
+                if (parseCommand(lineBuffer)) {
+                    commandValid = true;
+                    sendCommand();
+                }
+
+                bufferIndex = 0;
             }
         } else if (bufferIndex < MAX_LINE_LENGTH - 1) {
             lineBuffer[bufferIndex++] = c;
         }
+    }
+
+    if (now - lastCommandSend >= COMMAND_SEND_PERIOD_MS) {
+        lastCommandSend = now;
+        sendCommand();
     }
 }

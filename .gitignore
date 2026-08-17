@@ -3,3 +3,5 @@ app/build
 app/compile_commands.json
 firmware/compile_commands.json
 firmware/build
+web/node_modules
+web/dist
