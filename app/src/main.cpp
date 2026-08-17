@@ -235,8 +235,10 @@ public:
         try {
             serial = new SerialPort("/dev/ttyACM0", B115200);
             qDebug() << "Serial connected";
+        } catch (const std::exception& error) {
+            qWarning() << "Serial failed:" << error.what();
         } catch (...) {
-            qDebug() << "Serial failed";
+            qWarning() << "Serial failed: unknown error";
         }
 
         QTimer *timer = new QTimer(this);
@@ -445,6 +447,7 @@ private:
     void sendCommand() {
         if (!serial) return;
         QString line = formatCommandLine(cmd) + "\n";
+        qInfo().noquote() << "Serial TX:" << line.trimmed();
         serial->writeString(line.toStdString());
         lastSentLabel->setText("Last sent: " + line.trimmed());
     }
@@ -459,10 +462,16 @@ private:
             auto lineOpt = serial->readLine();
             if (!lineOpt) break;
 
+            qInfo().noquote() << "Serial RX:" << QString::fromStdString(*lineOpt);
+
             TelemetryData temp;
             if (parseTelemetryLine(*lineOpt, temp)) {
+                qInfo() << "Telemetry parsed: packet" << temp.packetNumber
+                        << "mission time" << temp.missionTime;
                 latest = temp;
                 gotData = true;
+            } else {
+                qWarning().noquote() << "Telemetry rejected:" << QString::fromStdString(*lineOpt);
             }
         }
 

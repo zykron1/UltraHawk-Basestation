@@ -37,7 +37,7 @@ public:
 		tty.c_oflag = 0;
 
 		tty.c_cc[VMIN] = 0;
-		tty.c_cc[VTIME] = 1; // 100 ms timeout
+		tty.c_cc[VTIME] = 0; // Return immediately when no bytes are available.
 
 		if (tcsetattr(fd, TCSANOW, &tty) != 0) {
 			throw std::runtime_error("Failed to configure serial port");
