@@ -1,0 +1,10 @@
+{
+  "name": "UltraHawk Ground Station",
+  "short_name": "UltraHawk GCS",
+  "description": "Browser ground station for UltraHawk vehicle telemetry and control",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080f16",
+  "theme_color": "#091018",
+  "categories": ["utilities", "productivity"]
+}
